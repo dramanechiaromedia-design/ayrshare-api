@@ -1,5 +1,8 @@
 {
   "name": "ayrshare-api",
   "version": "1.0.0",
-  "description": "Ayrshare API integration"
+  "description": "Ayrshare API integration",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0"
+  }
 }
