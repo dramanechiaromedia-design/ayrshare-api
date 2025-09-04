@@ -1,11 +1,23 @@
+import { supabase } from '../lib/supabase.js';
+
 export default async function handler(req, res) {
-  // This handles the redirect after user connects accounts
   const { clientId, status } = req.query;
   
-  // Redirect back to your Softr site
+  if (status === 'success' && clientId) {
+    // Update Supabase to mark as connected
+    await supabase
+      .from('user_details')
+      .update({ 
+        ayrshare_connected: true,
+        ayrshare_connected_at: new Date().toISOString()
+      })
+      .eq('client_id', clientId);
+  }
+  
+  // IMPORTANT: Update this with your actual Softr URL
   const redirectUrl = status === 'success' 
-    ? `https://your-softr-site.com/success?connected=true&clientId=${clientId}`
-    : `https://your-softr-site.com/success?connected=false`;
+    ? `https://yourapp.softr.app/success?connected=true`
+    : `https://yourapp.softr.app/success?connected=false`;
     
   res.writeHead(302, { Location: redirectUrl });
   res.end();
