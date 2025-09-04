@@ -2,7 +2,7 @@ import { supabase } from '../lib/supabase.js';
 
 export default async function handler(req, res) {
   // Enable CORS for Softr
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', 'https://www.autoviral.eu');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   
