@@ -43,56 +43,51 @@ export default async function handler(req, res) {
       console.log('No profile found in database, will create new one');
     }
     
-    // Step 2: If no profile key, create new Ayrshare profile
+    // Step 2: If no profile key, try to get existing or create new
     if (!profileKey) {
-      console.log('Creating new Ayrshare profile...');
-      
-      const createProfileResponse = await fetch('https://api.ayrshare.com/api/profiles/profile', {
-        method: 'POST',
+      // First check if profile already exists
+      const getProfilesResponse = await fetch('https://api.ayrshare.com/api/profiles', {
         headers: {
-          'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          title: `Profile_${clientId}` // Adding prefix to ensure uniqueness
-        })
+          'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`
+        }
       });
       
-      const profileText = await createProfileResponse.text();
-      console.log('Create profile response:', profileText);
-      
-      if (!createProfileResponse.ok) {
-        // If profile exists, get it
-        console.log('Profile creation failed, trying to get existing profiles...');
-        
-        const getProfilesResponse = await fetch('https://api.ayrshare.com/api/profiles', {
-          headers: {
-            'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`
-          }
-        });
-        
-        if (!getProfilesResponse.ok) {
-          throw new Error('Could not get profiles');
-        }
-        
+      if (getProfilesResponse.ok) {
         const profilesData = await getProfilesResponse.json();
-        console.log('All profiles:', profilesData);
-        
-        // Find profile with matching title
         const existingProfile = profilesData.profiles?.find(p => 
-          p.title === `Profile_${clientId}` || p.title === clientId
+          p.title === `Profile_${clientId}` || 
+          p.title === clientId ||
+          p.refId === clientId
         );
         
         if (existingProfile) {
           profileKey = existingProfile.profileKey;
-          console.log('Found existing profile with key:', profileKey);
-        } else {
-          throw new Error('Could not find or create profile');
+          console.log('Found existing profile:', profileKey);
         }
-      } else {
-        const newProfile = JSON.parse(profileText);
-        profileKey = newProfile.profileKey;
-        console.log('Created new profile with key:', profileKey);
+      }
+      
+      // If still no profile, create new one
+      if (!profileKey) {
+        console.log('Creating new Ayrshare profile...');
+        
+        const createProfileResponse = await fetch('https://api.ayrshare.com/api/profiles/profile', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            title: `Profile_${clientId}`
+          })
+        });
+        
+        if (createProfileResponse.ok) {
+          const newProfile = await createProfileResponse.json();
+          profileKey = newProfile.profileKey;
+          console.log('Created new profile:', profileKey);
+        } else {
+          throw new Error('Could not create profile');
+        }
       }
       
       // Save to database
@@ -105,35 +100,27 @@ export default async function handler(req, res) {
               ayrshare_connected: false
             })
             .eq('client_id', clientId);
-          console.log('Saved profile key to database');
         } catch (e) {
           console.log('Failed to save to database:', e);
         }
       }
     }
     
-    // Step 3: Generate JWT link with the profile key
-    if (!profileKey) {
-      throw new Error('No profile key available');
-    }
-    
+    // Step 3: Generate JWT link - CORRECTED ENDPOINT
     console.log('Generating JWT with profileKey:', profileKey);
     
-    const YOUR_VERCEL_URL = 'ayrshare-api.vercel.app'; 
+    const CALLBACK_URL = 'https://ayrshare-api.vercel.app/api/ayrshare-callback';
     
-    const jwtResponse = await fetch('https://api.ayrshare.com/api/profiles/generateJWT', {
+    const jwtResponse = await fetch('https://api.ayrshare.com/api/profiles/jwt', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`,
-        'Profile-Key': profileKey,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        url: `https://${YOUR_VERCEL_URL}/api/ayrshare-callback?clientId=${clientId}`,
-        showFbSub: true,
-        showInstagramSub: true,
-        hideTitle: false,
-        showUrl: true
+        profileKey: profileKey,
+        redirectUrl: `${CALLBACK_URL}?clientId=${clientId}`,
+        expiresIn: 300
       })
     });
     
@@ -141,22 +128,44 @@ export default async function handler(req, res) {
     console.log('JWT response:', jwtText);
     
     if (!jwtResponse.ok) {
-      throw new Error('JWT generation failed: ' + jwtText);
+      // Try alternative method - direct link generation
+      console.log('JWT failed, trying direct link generation...');
+      
+      const linkResponse = await fetch('https://api.ayrshare.com/api/profiles/generateJWT', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          profileKey: profileKey,
+          privateKey: process.env.AYRSHARE_API_KEY,
+          domain: 'app.ayrshare.com',
+          expiresIn: 300,
+          redirectUrl: `${CALLBACK_URL}?clientId=${clientId}`
+        })
+      });
+      
+      if (!linkResponse.ok) {
+        const errorText = await linkResponse.text();
+        throw new Error('Link generation failed: ' + errorText);
+      }
+      
+      const linkData = await linkResponse.json();
+      
+      return res.status(200).json({
+        success: true,
+        linkUrl: linkData.url || `https://app.ayrshare.com/profiles/auth?jwt=${linkData.jwt}`,
+        profileKey: profileKey
+      });
     }
     
     const jwt = JSON.parse(jwtText);
     
-    if (!jwt.url) {
-      throw new Error('No URL in JWT response');
-    }
-    
-    console.log('Successfully generated link');
-    
     return res.status(200).json({
       success: true,
-      linkUrl: jwt.url,
-      profileKey: profileKey,
-      expiresIn: jwt.expires || 300
+      linkUrl: jwt.url || `https://app.ayrshare.com/profiles/auth?jwt=${jwt.jwt}`,
+      profileKey: profileKey
     });
     
   } catch (error) {
