@@ -16,8 +16,8 @@ export default async function handler(req, res) {
   
   // IMPORTANT: Update this with your actual Softr URL
   const redirectUrl = status === 'success' 
-    ? `https://yourapp.softr.app/success?connected=true`
-    : `https://yourapp.softr.app/success?connected=false`;
+    ? `https://www.autoviral.eu/video-settings?connected=true`
+    : `https://www.autoviral.eu/video-settings?connected=false`;
     
   res.writeHead(302, { Location: redirectUrl });
   res.end();
