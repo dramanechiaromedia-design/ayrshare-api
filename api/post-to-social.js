@@ -1,3 +1,5 @@
+import { supabase } from '../lib/supabase.js';
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -7,13 +9,28 @@ export default async function handler(req, res) {
   }
   
   try {
-    const { profileKey, content, platforms = ['facebook', 'instagram'] } = req.body;
+    const { clientId, content, platforms = ['facebook', 'instagram'] } = req.body;
     
+    // Get profile key from Supabase
+    const { data: user } = await supabase
+      .from('user_details')
+      .select('ayrshare_profile_key')
+      .eq('client_id', clientId)
+      .single();
+    
+    if (!user?.ayrshare_profile_key) {
+      return res.status(400).json({
+        success: false,
+        error: 'User not connected to social media'
+      });
+    }
+    
+    // Post to social media
     const postResponse = await fetch('https://api.ayrshare.com/api/post', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`,
-        'Profile-Key': profileKey,
+        'Profile-Key': user.ayrshare_profile_key,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
