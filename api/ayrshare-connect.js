@@ -94,10 +94,13 @@ export default async function handler(req, res) {
     
     console.log('Generating JWT for profileKey:', profileKey);
     
+    const callbackUrl = `https://ayrshare-api.vercel.app/api/ayrshare-callback?clientId=${clientId}`;
+    
     const jwtBody = {
       domain: DOMAIN,
       privateKey: PRIVATE_KEY,
-      profileKey: profileKey
+      profileKey: profileKey,
+      redirect: callbackUrl
     };
     
     const jwtResponse = await fetch('https://api.ayrshare.com/api/profiles/generateJWT', {
@@ -121,7 +124,8 @@ export default async function handler(req, res) {
     return res.status(200).json({
       success: true,
       linkUrl: ssoUrl,
-      profileKey: profileKey
+      profileKey: profileKey,
+      clientId: clientId
     });
     
   } catch (error) {
