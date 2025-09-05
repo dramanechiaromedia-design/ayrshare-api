@@ -10,17 +10,16 @@ export default async function handler(req, res) {
   }
   
   try {
-    const { clientId, profileKey } = req.body;
+    const { userEmail, profileKey } = req.body;
     
-    if (!clientId || !profileKey) {
+    if (!userEmail || !profileKey) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Client ID and Profile Key required' 
+        error: 'Email and Profile Key required' 
       });
     }
     
     const profileResponse = await fetch('https://api.ayrshare.com/api/profiles/profile', {
-      method: 'GET',
       headers: {
         'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`,
         'Profile-Key': profileKey
@@ -32,15 +31,25 @@ export default async function handler(req, res) {
       const hasConnections = profileData.activeSocialAccounts && 
                             profileData.activeSocialAccounts.length > 0;
       
+      console.log('Profile check for', userEmail, '- Connected accounts:', profileData.activeSocialAccounts);
+      
       if (hasConnections) {
-        await supabase
+        const { data, error } = await supabase
           .from('user_details')
           .update({ 
             ayrshare_connected: true,
             ayrshare_connected_at: new Date().toISOString(),
             facebook_instagram_connection: 'Connected'
           })
-          .eq('client_id', clientId);
+          .eq('user_email', userEmail)
+          .select();
+        
+        if (error) {
+          console.error('Update error:', error);
+          return res.status(500).json({ success: false, error: error.message });
+        }
+        
+        console.log('Updated user:', data);
         
         return res.status(200).json({
           success: true,
