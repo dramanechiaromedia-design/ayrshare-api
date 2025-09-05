@@ -1,17 +1,16 @@
 import { supabase } from '../lib/supabase.js';
 
+// Your private key from the .key file - store this in environment variable
+const PRIVATE_KEY = process.env.AYRSHARE_PRIVATE_KEY;
+const DOMAIN = "id-_P6eX"; // Your domain from the integration guide
+
 export default async function handler(req, res) {
-  // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
-  }
-  
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
   }
   
   try {
@@ -24,155 +23,86 @@ export default async function handler(req, res) {
       });
     }
     
-    console.log('Processing request for clientId:', clientId);
-    
-    // Step 1: Check if user already has profile in database
+    // Step 1: Check if user already has profile
     let profileKey = null;
-    try {
-      const { data } = await supabase
-        .from('user_details')
-        .select('ayrshare_profile_key')
-        .eq('client_id', clientId)
-        .single();
-      
-      if (data?.ayrshare_profile_key) {
-        profileKey = data.ayrshare_profile_key;
-        console.log('Found existing profile key in database:', profileKey);
-      }
-    } catch (e) {
-      console.log('No profile found in database, will create new one');
-    }
+    const { data: existingUser } = await supabase
+      .from('user_details')
+      .select('ayrshare_profile_key')
+      .eq('client_id', clientId)
+      .single();
     
-    // Step 2: If no profile key, try to get existing or create new
-    if (!profileKey) {
-      // First check if profile already exists
-      const getProfilesResponse = await fetch('https://api.ayrshare.com/api/profiles', {
-        headers: {
-          'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`
-        }
-      });
-      
-      if (getProfilesResponse.ok) {
-        const profilesData = await getProfilesResponse.json();
-        const existingProfile = profilesData.profiles?.find(p => 
-          p.title === `Profile_${clientId}` || 
-          p.title === clientId ||
-          p.refId === clientId
-        );
-        
-        if (existingProfile) {
-          profileKey = existingProfile.profileKey;
-          console.log('Found existing profile:', profileKey);
-        }
-      }
-      
-      // If still no profile, create new one
-      if (!profileKey) {
-        console.log('Creating new Ayrshare profile...');
-        
-        const createProfileResponse = await fetch('https://api.ayrshare.com/api/profiles/profile', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            title: `Profile_${clientId}`
-          })
-        });
-        
-        if (createProfileResponse.ok) {
-          const newProfile = await createProfileResponse.json();
-          profileKey = newProfile.profileKey;
-          console.log('Created new profile:', profileKey);
-        } else {
-          throw new Error('Could not create profile');
-        }
-      }
-      
-      // Save to database
-      if (profileKey) {
-        try {
-          await supabase
-            .from('user_details')
-            .update({ 
-              ayrshare_profile_key: profileKey,
-              ayrshare_connected: false
-            })
-            .eq('client_id', clientId);
-        } catch (e) {
-          console.log('Failed to save to database:', e);
-        }
-      }
-    }
-    
-    // Step 3: Generate JWT link - CORRECTED ENDPOINT
-    console.log('Generating JWT with profileKey:', profileKey);
-    
-    const CALLBACK_URL = 'https://ayrshare-api.vercel.app/api/ayrshare-callback';
-    
-    const jwtResponse = await fetch('https://api.ayrshare.com/api/profiles/jwt', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        profileKey: profileKey,
-        redirectUrl: `${CALLBACK_URL}?clientId=${clientId}`,
-        expiresIn: 300
-      })
-    });
-    
-    const jwtText = await jwtResponse.text();
-    console.log('JWT response:', jwtText);
-    
-    if (!jwtResponse.ok) {
-      // Try alternative method - direct link generation
-      console.log('JWT failed, trying direct link generation...');
-      
-      const linkResponse = await fetch('https://api.ayrshare.com/api/profiles/generateJWT', {
+    if (existingUser?.ayrshare_profile_key) {
+      profileKey = existingUser.ayrshare_profile_key;
+    } else {
+      // Create new profile
+      const profileResponse = await fetch('https://api.ayrshare.com/api/profiles/profile', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          profileKey: profileKey,
-          privateKey: process.env.AYRSHARE_API_KEY,
-          domain: 'app.ayrshare.com',
-          expiresIn: 300,
-          redirectUrl: `${CALLBACK_URL}?clientId=${clientId}`
+          title: clientId
         })
       });
       
-      if (!linkResponse.ok) {
-        const errorText = await linkResponse.text();
-        throw new Error('Link generation failed: ' + errorText);
+      if (profileResponse.ok) {
+        const profile = await profileResponse.json();
+        profileKey = profile.profileKey;
+        
+        // Save to database
+        await supabase
+          .from('user_details')
+          .update({ 
+            ayrshare_profile_key: profileKey,
+            ayrshare_connected: false
+          })
+          .eq('client_id', clientId);
+      } else {
+        throw new Error('Could not create profile');
       }
-      
-      const linkData = await linkResponse.json();
+    }
+    
+    // Step 2: Generate JWT with your private key and domain
+    const jwtResponse = await fetch('https://api.ayrshare.com/api/profiles/generateJWT', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        domain: DOMAIN,
+        privateKey: PRIVATE_KEY,
+        profileKey: profileKey,
+        redirect: 'https://www.autoviral.eu/video-settings', 
+        logout: true 
+      })
+    });
+    
+    const jwtData = await jwtResponse.json();
+    
+    if (!jwtData.url) {
+      // Construct URL manually if not returned
+      const url = `https://profile.ayrshare.com/social-accounts?domain=${DOMAIN}&jwt=${jwtData.token || jwtData.jwt}`;
       
       return res.status(200).json({
         success: true,
-        linkUrl: linkData.url || `https://app.ayrshare.com/profiles/auth?jwt=${linkData.jwt}`,
+        linkUrl: url,
         profileKey: profileKey
       });
     }
     
-    const jwt = JSON.parse(jwtText);
-    
     return res.status(200).json({
       success: true,
-      linkUrl: jwt.url || `https://app.ayrshare.com/profiles/auth?jwt=${jwt.jwt}`,
+      linkUrl: jwtData.url,
       profileKey: profileKey
     });
     
   } catch (error) {
-    console.error('Error:', error.message);
+    console.error('Error:', error);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Internal server error'
+      error: error.message
     });
   }
 }
