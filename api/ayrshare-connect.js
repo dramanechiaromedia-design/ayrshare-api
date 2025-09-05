@@ -52,7 +52,6 @@ export default async function handler(req, res) {
         
         if (existingProfile) {
           profileKey = existingProfile.profileKey;
-          console.log('Found existing Ayrshare profile for email');
         }
       }
       
@@ -74,7 +73,6 @@ export default async function handler(req, res) {
         if (profileResponse.ok) {
           const profile = await profileResponse.json();
           profileKey = profile.profileKey;
-          console.log('Created new profile with key:', profileKey);
         } else {
           const errorText = await profileResponse.text();
           throw new Error('Could not create profile: ' + errorText);
@@ -82,29 +80,24 @@ export default async function handler(req, res) {
       }
       
       if (profileKey) {
-        const { error } = await supabase
+        await supabase
           .from('user_details')
           .update({ 
             ayrshare_profile_key: profileKey,
             ayrshare_connected: false
           })
           .eq('user_email', userEmail);
-        
-        if (error) {
-          console.log('Database update error:', error);
-        }
       }
     }
     
     console.log('Generating JWT for profileKey:', profileKey);
     
-    const callbackUrl = `https://ayrshare-api.vercel.app/api/ayrshare-callback?email=${encodeURIComponent(userEmail)}`;
-    
+    // The issue was here - Ayrshare doesn't use the redirect parameter from JWT
+    // Instead, we'll handle it differently
     const jwtBody = {
       domain: DOMAIN,
       privateKey: PRIVATE_KEY,
-      profileKey: profileKey,
-      redirectUrl: callbackUrl
+      profileKey: profileKey
     };
     
     const jwtResponse = await fetch('https://api.ayrshare.com/api/profiles/generateJWT', {
@@ -128,7 +121,8 @@ export default async function handler(req, res) {
     return res.status(200).json({
       success: true,
       linkUrl: ssoUrl,
-      profileKey: profileKey
+      profileKey: profileKey,
+      userEmail: userEmail  // Return email for frontend use
     });
     
   } catch (error) {
