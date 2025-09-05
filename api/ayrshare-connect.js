@@ -24,91 +24,74 @@ export default async function handler(req, res) {
     
     console.log('Processing for clientId:', clientId);
     
-    // Step 1: Check if profile already exists in Ayrshare
     let profileKey = null;
     
-    // First, check Ayrshare for existing profiles
-    const getProfilesResponse = await fetch('https://api.ayrshare.com/api/profiles', {
-      headers: {
-        'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`
-      }
-    });
+    const { data: existingUser } = await supabase
+      .from('user_details')
+      .select('ayrshare_profile_key')
+      .eq('client_id', clientId)
+      .single();
     
-    if (getProfilesResponse.ok) {
-      const profilesData = await getProfilesResponse.json();
-      console.log('Existing profiles count:', profilesData.profiles?.length);
-      
-      // Find if profile already exists
-      const existingProfile = profilesData.profiles?.find(p => 
-        p.title === clientId || 
-        p.refId === clientId ||
-        p.title === `Profile_${clientId}`
-      );
-      
-      if (existingProfile) {
-        profileKey = existingProfile.profileKey;
-        console.log('Found existing profile:', profileKey);
-      }
-    }
-    
-    // Step 2: If no profile exists, create new one
-    if (!profileKey) {
-      console.log('Creating new profile for:', clientId);
-      
-      const profileResponse = await fetch('https://api.ayrshare.com/api/profiles/profile', {
-        method: 'POST',
+    if (existingUser?.ayrshare_profile_key) {
+      profileKey = existingUser.ayrshare_profile_key;
+      console.log('Found existing profile key in database:', profileKey);
+    } else {
+      const getProfilesResponse = await fetch('https://api.ayrshare.com/api/profiles', {
         headers: {
-          'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          title: clientId,
-          refId: clientId
-        })
+          'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`
+        }
       });
       
-      const profileText = await profileResponse.text();
-      console.log('Create profile response:', profileResponse.status, profileText);
-      
-      if (!profileResponse.ok) {
-        // Parse error message
-        let errorMsg = 'Could not create profile';
-        try {
-          const errorData = JSON.parse(profileText);
-          errorMsg = errorData.message || errorData.error || errorMsg;
-        } catch (e) {
-          errorMsg = profileText;
+      if (getProfilesResponse.ok) {
+        const profilesData = await getProfilesResponse.json();
+        
+        const existingProfile = profilesData.profiles?.find(p => 
+          p.title === clientId || 
+          p.refId === clientId
+        );
+        
+        if (existingProfile) {
+          profileKey = existingProfile.profileKey;
+          console.log('Found existing Ayrshare profile:', profileKey);
         }
-        throw new Error(errorMsg);
       }
       
-      const profile = JSON.parse(profileText);
-      profileKey = profile.profileKey;
-      console.log('Created new profile with key:', profileKey);
-    }
-    
-    // Step 3: Save to database 
-    if (profileKey) {
-      try {
-        const { error: dbError } = await supabase
+      if (!profileKey) {
+        console.log('Creating new profile for:', clientId);
+        
+        const profileResponse = await fetch('https://api.ayrshare.com/api/profiles/profile', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.AYRSHARE_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            title: clientId,
+            refId: clientId
+          })
+        });
+        
+        if (profileResponse.ok) {
+          const profile = await profileResponse.json();
+          profileKey = profile.profileKey;
+          console.log('Created new profile with key:', profileKey);
+        } else {
+          const errorText = await profileResponse.text();
+          throw new Error('Could not create profile: ' + errorText);
+        }
+      }
+      
+      if (profileKey) {
+        await supabase
           .from('user_details')
-          .upsert({ 
-            client_id: clientId,
+          .update({ 
             ayrshare_profile_key: profileKey,
             ayrshare_connected: false
-          }, { 
-            onConflict: 'client_id' 
-          });
-        
-        if (dbError) {
-          console.log('Database update error (non-fatal):', dbError);
-        }
-      } catch (e) {
-        console.log('Database error (continuing):', e);
+          })
+          .eq('client_id', clientId);
       }
     }
     
-    // Step 4: Generate JWT
     console.log('Generating JWT for profileKey:', profileKey);
     
     const jwtBody = {
@@ -126,16 +109,13 @@ export default async function handler(req, res) {
       body: JSON.stringify(jwtBody)
     });
     
-    const jwtText = await jwtResponse.text();
-    console.log('JWT response:', jwtResponse.status);
-    
     if (!jwtResponse.ok) {
-      throw new Error('JWT generation failed: ' + jwtText);
+      const errorText = await jwtResponse.text();
+      throw new Error('JWT generation failed: ' + errorText);
     }
     
-    const jwtData = JSON.parse(jwtText);
+    const jwtData = await jwtResponse.json();
     
-    // Construct the SSO URL
     const ssoUrl = jwtData.url || `https://profile.ayrshare.com/social-accounts?domain=${DOMAIN}&jwt=${jwtData.token || jwtData.jwt}`;
     
     return res.status(200).json({
