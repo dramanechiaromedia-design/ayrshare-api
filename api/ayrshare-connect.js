@@ -13,28 +13,28 @@ export default async function handler(req, res) {
   }
   
   try {
-    const { clientId } = req.body;
+    const { clientId, userEmail } = req.body;
     
-    if (!clientId) {
+    if (!clientId || !userEmail) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Client ID required' 
+        error: 'Client ID and email required' 
       });
     }
     
-    console.log('Processing for clientId:', clientId);
+    console.log('Processing for email:', userEmail);
     
     let profileKey = null;
     
     const { data: existingUser } = await supabase
       .from('user_details')
       .select('ayrshare_profile_key')
-      .eq('client_id', clientId)
-      .single();
+      .eq('user_email', userEmail)
+      .maybeSingle();
     
     if (existingUser?.ayrshare_profile_key) {
       profileKey = existingUser.ayrshare_profile_key;
-      console.log('Found existing profile key in database:', profileKey);
+      console.log('Found existing profile key for email:', userEmail);
     } else {
       const getProfilesResponse = await fetch('https://api.ayrshare.com/api/profiles', {
         headers: {
@@ -46,18 +46,18 @@ export default async function handler(req, res) {
         const profilesData = await getProfilesResponse.json();
         
         const existingProfile = profilesData.profiles?.find(p => 
-          p.title === clientId || 
-          p.refId === clientId
+          p.title === userEmail || 
+          p.refId === userEmail
         );
         
         if (existingProfile) {
           profileKey = existingProfile.profileKey;
-          console.log('Found existing Ayrshare profile:', profileKey);
+          console.log('Found existing Ayrshare profile for email');
         }
       }
       
       if (!profileKey) {
-        console.log('Creating new profile for:', clientId);
+        console.log('Creating new profile for email:', userEmail);
         
         const profileResponse = await fetch('https://api.ayrshare.com/api/profiles/profile', {
           method: 'POST',
@@ -66,8 +66,8 @@ export default async function handler(req, res) {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            title: clientId,
-            refId: clientId
+            title: userEmail,
+            refId: userEmail
           })
         });
         
@@ -82,25 +82,29 @@ export default async function handler(req, res) {
       }
       
       if (profileKey) {
-        await supabase
+        const { error } = await supabase
           .from('user_details')
           .update({ 
             ayrshare_profile_key: profileKey,
             ayrshare_connected: false
           })
-          .eq('client_id', clientId);
+          .eq('user_email', userEmail);
+        
+        if (error) {
+          console.log('Database update error:', error);
+        }
       }
     }
     
     console.log('Generating JWT for profileKey:', profileKey);
     
-    const callbackUrl = `https://ayrshare-api.vercel.app/api/ayrshare-callback?clientId=${clientId}`;
+    const callbackUrl = `https://ayrshare-api.vercel.app/api/ayrshare-callback?email=${encodeURIComponent(userEmail)}`;
     
     const jwtBody = {
       domain: DOMAIN,
       privateKey: PRIVATE_KEY,
       profileKey: profileKey,
-      redirect: callbackUrl
+      redirectUrl: callbackUrl
     };
     
     const jwtResponse = await fetch('https://api.ayrshare.com/api/profiles/generateJWT', {
@@ -124,8 +128,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       success: true,
       linkUrl: ssoUrl,
-      profileKey: profileKey,
-      clientId: clientId
+      profileKey: profileKey
     });
     
   } catch (error) {
